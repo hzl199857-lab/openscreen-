@@ -1,0 +1,85 @@
+name: Region recording Windows installer
+
+on:
+  push:
+    branches: [codex/region-installers]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 90
+    env:
+      CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+    steps:
+      - uses: actions/checkout@v7
+      - name: Verify and extract complete source snapshot
+        shell: pwsh
+        run: |
+          $archive = '.sources/openscreen-region.tar.gz'
+          $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
+          if ($actual -ne '1a4fcfc0e2305111196a131fb19c0d95e97de56d5dfd3018ed36da0421c4158b') { throw 'Source archive checksum mismatch' }
+          tar -xzf $archive
+          if ($LASTEXITCODE -ne 0) { throw 'Source extraction failed' }
+      - uses: actions/setup-node@v7
+        with:
+          node-version: 22.22.1
+          cache: npm
+      - run: npm install --global npm@10.9.4
+      - run: npm ci
+      - name: Typecheck app and tests
+        run: |
+          npx tsc --noEmit
+          npx tsc -p tsconfig.test.json --noEmit
+      - name: Region tests
+        run: npx vitest --run src/lib/captureRegion.test.ts src/components/launch/RegionSelector.test.tsx electron/regionSelector.test.ts electron/native-bridge/captureRegionCoordinates.test.ts electron/native-bridge/cursor/recording/windowsNativeRecordingSession.test.ts
+      - name: Install Vulkan SDK for bundled transcription
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.304.1
+          install_runtime: false
+          cache: true
+      - name: Configure Vulkan tools and SPIRV headers
+        shell: bash
+        run: |
+          set -euo pipefail
+          for candidate in "${VULKAN_SDK}/Bin" "${VULKAN_SDK}/bin"; do
+            if [[ -d "$candidate" ]]; then echo "$candidate" >> "$GITHUB_PATH"; fi
+          done
+          sdk_ports="$(dirname "$(command -v vcpkg)")"
+          "${sdk_ports}/vcpkg" install spirv-headers:x64-windows
+          echo "CMAKE_PREFIX_PATH=${sdk_ports}/installed/x64-windows" >> "$GITHUB_ENV"
+      - name: Build bundled transcription
+        shell: bash
+        run: bash scripts/build-whisper-stt.sh
+      - name: Build native capture, compositor, and installer
+        run: npm run build:win -- --config scripts/region-builder.config.cjs --x64 --publish never
+      - name: Verify native feature and installer
+        shell: pwsh
+        run: |
+          $helper = 'electron/native/bin/win32-x64/wgc-capture.exe'
+          $binary = [Text.Encoding]::ASCII.GetString([IO.File]::ReadAllBytes((Resolve-Path $helper)))
+          if (!$binary.Contains('capture-region') -or !$binary.Contains('encoder-selection')) {
+            throw 'The installer must contain the freshly built region capture helper.'
+          }
+          $packaged = 'release/region-installers/win-unpacked/resources/electron/native/bin/win32-x64/wgc-capture.exe'
+          if ((Get-FileHash $helper).Hash -ne (Get-FileHash $packaged).Hash) {
+            throw 'Packaged helper differs from the tested build.'
+          }
+          $installers = @(Get-ChildItem release/region-installers -Filter '*-Setup.exe')
+          if ($installers.Count -ne 1) { throw 'Expected exactly one Windows installer.' }
+          $installers | ForEach-Object {
+            $hash = (Get-FileHash $_.FullName -Algorithm SHA256).Hash.ToLower()
+            "$hash  $($_.Name)" | Set-Content 'release/region-installers/SHA256SUMS-Windows.txt'
+          }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: OpenScreen-Region-Windows-x64
+          path: |
+            release/region-installers/*-Setup.exe
+            release/region-installers/SHA256SUMS-Windows.txt
+          if-no-files-found: error
+          retention-days: 30
