@@ -21,7 +21,7 @@ jobs:
         run: |
           $archive = '.sources/openscreen-region.tar.gz'
           $actual = (Get-FileHash $archive -Algorithm SHA256).Hash.ToLower()
-          if ($actual -ne '1a4fcfc0e2305111196a131fb19c0d95e97de56d5dfd3018ed36da0421c4158b') { throw 'Source archive checksum mismatch' }
+          if ($actual -ne '8cce64af60fdeb9a2c41a5f7dc4eeaac06f64eeffd0ce73377c3bfc17e9771da') { throw 'Source archive checksum mismatch' }
           tar -xzf $archive
           if ($LASTEXITCODE -ne 0) { throw 'Source extraction failed' }
       - uses: actions/setup-node@v7
@@ -35,7 +35,7 @@ jobs:
           npx tsc --noEmit
           npx tsc -p tsconfig.test.json --noEmit
       - name: Region tests
-        run: npx vitest --run src/lib/captureRegion.test.ts src/components/launch/RegionSelector.test.tsx electron/regionSelector.test.ts electron/native-bridge/captureRegionCoordinates.test.ts electron/native-bridge/cursor/recording/windowsNativeRecordingSession.test.ts
+        run: npx vitest --run src/lib/captureRegion.test.ts src/components/launch/RegionSelector.test.tsx electron/regionSelector.test.ts electron/native-bridge/captureRegionCoordinates.test.ts electron/native-bridge/cursor/recording/windowsNativeRecordingSession.test.ts src/components/video-editor/editorDefaults.test.ts src/lib/ai-edition/store/editorSettings.test.ts src/lib/ai-edition/document/outputFormat.test.ts
       - name: Install Vulkan SDK for bundled transcription
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
